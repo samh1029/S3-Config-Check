@@ -11,6 +11,7 @@ def is_oversized_changed_notification(message_type):
     check_defined(message_type, 'messageType')
     return message_type == 'OversizedConfigurationItemChangeNotification'
 
+
 # Get configurationItem using getResourceConfigHistory API
 # in case of OversizedConfigurationItemChangeNotification
 def get_configuration(resource_type, resource_id, configuration_capture_time):
@@ -21,6 +22,7 @@ def get_configuration(resource_type, resource_id, configuration_capture_time):
         limit=1)
     configurationItem = result.get('configurationItems')[0]
     return convert_api_configuration(configurationItem)
+
 
 # Convert from the API model to the original invocation model
 def convert_api_configuration(configurationItem):
@@ -48,6 +50,7 @@ def get_configuration_item(invokingEvent):
         return get_configuration(configurationItemSummary.get('resourceType'), configurationItemSummary.get('resourceId'), configurationItemSummary.get('configurationItemCaptureTime'))
     return check_defined(invokingEvent.get('configurationItem'), 'configurationItem')
 
+
 # Check whether the resource has been deleted. If it has, then the evaluation is unnecessary.
 def is_applicable(configurationItem, event):
     try:
@@ -61,11 +64,13 @@ def is_applicable(configurationItem, event):
         print("Resource Deleted, setting Compliance Status to NOT_APPLICABLE.")
     return (status == 'OK' or status == 'ResourceDiscovered') and not eventLeftScope
 
+
 # Helper function used to validate input
 def check_defined(reference, reference_name):
     if not reference:
         raise Exception('Error: ', reference_name, 'is not defined')
     return reference
+
 
 def get_assume_role_credentials(role_arn):
     sts_client = boto3.client('sts')
@@ -145,6 +150,7 @@ def evaluate_change_notification_compliance(configuration_item, rule_parameters)
                 compliance.append(inDB(account))
         print(compliance)
         return "NON_COMPLIANT" if 'NON_COMPLIANT' in compliance else "COMPLIANT"
+
 
 def lambda_handler(event, context):
 
