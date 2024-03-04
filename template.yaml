@@ -1,0 +1,105 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  An AWS Lambda function
+Transform:
+  - "AWS::Serverless-2016-10-31"
+Parameters:
+  OrganizationID:
+    Type: String
+    Default: "False"
+  ouID:
+    Type: String
+    Default: "False"
+  useDatabase:
+    Type: String
+    Default: "False"
+    AllowedValues:
+      - "True"
+      - "False"
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          Default: Organization Details
+        Parameters:
+          - OrganizationID
+          - ouID
+      - Label:
+          Default: Database
+        Parameters:
+          - useDatabase
+    ParameterLabels:
+      OrganizationID:
+        Default: Please enter the Organization ID you would like to check the policies under, leave as False if not required.
+      ouID:
+        Default: Please enter the Organizational Unit ID you would like to check the policies under, leave as False if not required.
+      useDatabase:
+        Default: Please enter True if you would like to check the policies under a custom DynamoDB, leave as False if not required.
+
+Conditions:
+  CreateDynamoDB: !Equals [!Ref useDatabase, "True"]
+
+Resources:
+  Lambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      Environment:
+        Variables:
+          ORG_ID: !Ref OrganizationID
+          OU_ID: !Ref ouID
+          USE_DB: !Ref useDatabase
+          DATABASE_ARN: !If [CreateDynamoDB, !GetAtt dynamoDB.Arn, "False"]
+      Description: A Lambda function
+      Runtime: python3.12
+      Handler: main.lambda_handler
+      MemorySize: 512
+      Timeout: 900
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSConfigRulesExecutionRole
+        - !If [
+            CreateDynamoDB,
+            "arn:aws:iam::aws:policy/AWSLambdaInvocation-DynamoDB",
+            !Ref "AWS::NoValue"
+          ]
+  ConfigS3BucketPolicy:
+    Type: AWS::Config::ConfigRule
+    DependsOn: ConfigPermissionToCallConfigS3BucketPolicy
+    Properties:
+      ConfigRuleName: S3-BucketPolicy
+      Description: Custom AWS Config rule to check S3 Bucket Policy changes
+      MaximumExecutionFrequency: TwentyFour_Hours
+      Scope:
+        ComplianceResourceTypes:
+          - AWS::S3::Bucket
+      Source:
+        Owner: CUSTOM_LAMBDA
+        SourceDetails:
+          - EventSource: "aws.config"
+            MessageType: "ConfigurationItemChangeNotification"
+        SourceIdentifier: !GetAtt Lambda.Arn
+  ConfigPermissionToCallConfigS3BucketPolicy:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt Lambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: config.amazonaws.com
+  dynamoDB:
+    Type: AWS::DynamoDB::Table
+    Condition: CreateDynamoDB
+    Properties:
+      TableName: "S3PolicyAllowedAccIDs"
+      AttributeDefinitions:
+        - AttributeName: "AllowedAccountID"
+          AttributeType: "N"
+        - AttributeName: "Reason"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "AllowedAccountID"
+          KeyType: "HASH"
+        - AttributeName: "Reason"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: "5"
+        WriteCapacityUnits: "5"
