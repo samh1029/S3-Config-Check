@@ -89,7 +89,7 @@ Resources:
     Type: AWS::DynamoDB::Table
     Condition: CreateDynamoDB
     Properties:
-      TableName: "S3PolicyAllowedAccIDS"
+      TableName: "S3PolicyAllowedAccIDs"
       AttributeDefinitions:
         - AttributeName: "AllowedAccountID"
           AttributeType: "S"
