@@ -1,31 +1,81 @@
 import json
+import logging
 import datetime
 import os
-
 import boto3
 import botocore
 
 
-# Check whether the message is OversizedConfigurationItemChangeNotification or not
+# Configuration
+AWS_CONFIG_CLIENT = boto3.client('config')
+AWS_DYNAMODB_CLIENT = boto3.client('dynamodb')
+AWS_ORGANIZATION_CLIENT = boto3.client('organization')
+AWS_STS_CLIENT = boto3.client('sts')
+ORG_ID = False if str(os.environ.get('ORG_ID')).lower() == "false" else os.environ.get('ORG_ID')
+OU_ID = False if str(os.environ.get('OU_ID')).lower() == "false" else os.environ.get('OU_ID')
+USE_DB = False if str(os.environ.get('USE_DB')).lower() == "false" else True
+DATABASE_ARN = False if str(os.environ.get('DATABASE_ARN')).lower() == "false" else os.environ.get('DATABASE_ARN')
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+
+def get_aws_account_id():
+    """
+    Retrieves the AWS account ID.
+
+    Returns:
+        str: AWS account ID.
+    """
+    return boto3.client('sts').get_caller_identity().get('Account')
+
+
 def is_oversized_changed_notification(message_type):
+    """
+    Checks if the message type is 'OversizedConfigurationItemChangeNotification'.
+
+    Args:
+        message_type (str): The message type.
+
+    Returns:
+        bool: True if it's an OversizedConfigurationItemChangeNotification, otherwise False.
+    """
     check_defined(message_type, 'messageType')
     return message_type == 'OversizedConfigurationItemChangeNotification'
 
 
-# Get configurationItem using getResourceConfigHistory API
-# in case of OversizedConfigurationItemChangeNotification
 def get_configuration(resource_type, resource_id, configuration_capture_time):
+    """
+    Retrieves the configuration item using the getResourceConfigHistory API.
+
+    Args:
+        resource_type (str): The type of AWS resource.
+        resource_id (str): The ID of the AWS resource.
+        configuration_capture_time (datetime): The timestamp to capture the configuration.
+
+    Returns:
+        dict: The configuration item.
+    """
     result = AWS_CONFIG_CLIENT.get_resource_config_history(
         resourceType=resource_type,
         resourceId=resource_id,
         laterTime=configuration_capture_time,
-        limit=1)
-    configurationItem = result.get('configurationItems')[0]
-    return convert_api_configuration(configurationItem)
+        limit=1
+    )
+    configuration_item = result.get('configurationItems')[0]
+    return convert_api_configuration(configuration_item)
 
 
-# Convert from the API model to the original invocation model
 def convert_api_configuration(configurationItem):
+    """
+    Converts configuration from the API model to the original invocation model.
+
+    Args:
+        configurationItem (dict): The configuration item in API model.
+
+    Returns:
+        dict: The converted configuration item.
+    """
     for k, v in configurationItem.items():
         if isinstance(v, datetime.datetime):
             configurationItem[k] = str(v)
@@ -40,10 +90,16 @@ def convert_api_configuration(configurationItem):
     return configurationItem
 
 
-# Based on the type of message get the configuration item
-# either from configurationItem in the invoking event
-# or using the getResourceConfigHistory API in getConfiguration function.
 def get_configuration_item(invokingEvent):
+    """
+    Gets the configuration item based on the invoking event.
+
+    Args:
+        invokingEvent (dict): The invoking event.
+
+    Returns:
+        dict: The configuration item.
+    """
     check_defined(invokingEvent, 'invokingEvent')
     if is_oversized_changed_notification(invokingEvent.get('messageType')):
         configurationItemSummary = check_defined(invokingEvent.get('configurationItemSummary'), 'configurationItemSummary')
@@ -51,8 +107,17 @@ def get_configuration_item(invokingEvent):
     return check_defined(invokingEvent.get('configurationItem'), 'configurationItem')
 
 
-# Check whether the resource has been deleted. If it has, then the evaluation is unnecessary.
 def is_applicable(configurationItem, event):
+    """
+    Checks whether the resource has been deleted.
+
+    Args:
+        configurationItem (dict): The configuration item.
+        event (dict): The event.
+
+    Returns:
+        bool: True if the resource is applicable for evaluation, otherwise False.
+    """
     try:
         check_defined(configurationItem, 'configurationItem')
         check_defined(event, 'event')
@@ -61,24 +126,43 @@ def is_applicable(configurationItem, event):
     status = configurationItem.get('configurationItemStatus')
     eventLeftScope = event.get('eventLeftScope')
     if status == 'ResourceDeleted':
-        print("Resource Deleted, setting Compliance Status to NOT_APPLICABLE.")
+        logging.info("Resource Deleted, setting Compliance Status to NOT_APPLICABLE.")
     return (status == 'OK' or status == 'ResourceDiscovered') and not eventLeftScope
 
 
-# Helper function used to validate input
 def check_defined(reference, reference_name):
+    """
+    Helper function to check if a reference is defined.
+
+    Args:
+        reference: The reference to check.
+        reference_name (str): The name of the reference.
+
+    Returns:
+        reference: The reference if defined.
+
+    Raises:
+        Exception: If the reference is not defined.
+    """
     if not reference:
         raise Exception('Error: ', reference_name, 'is not defined')
     return reference
 
 
 def get_assume_role_credentials(role_arn):
-    sts_client = boto3.client('sts')
+    """
+    Assumes a role and returns the credentials.
+
+    Args:
+        role_arn (str): The ARN of the IAM role.
+
+    Returns:
+        dict: The assumed role credentials.
+    """
     try:
-        assume_role_response = sts_client.assume_role(RoleArn=role_arn, RoleSessionName="configLambdaExecution")
+        assume_role_response = AWS_STS_CLIENT.assume_role(RoleArn=role_arn, RoleSessionName="configLambdaExecution")
         return assume_role_response.get('Credentials')
     except botocore.exceptions.ClientError as ex:
-        # Scrub error message for any internal account info leaks
         if 'AccessDenied' in ex.response.get('Error').get('Code'):
             ex.response['Error']['Message'] = "AWS Config does not have permission to assume the IAM role."
         else:
@@ -109,30 +193,36 @@ def inDB(account):
 
 
 def evaluate_change_notification_compliance(configuration_item, rule_parameters):
+    """
+    Evaluates compliance based on change notification.
+
+    Args:
+        configuration_item (dict): The configuration item.
+        rule_parameters (dict): The rule parameters.
+
+    Returns:
+        str: The compliance status ('COMPLIANT', 'NON_COMPLIANT', 'NOT_APPLICABLE').
+    """
     check_defined(configuration_item, 'configuration_item')
     check_defined(configuration_item.get('configuration'), 'configuration_item[\'configuration\']')
 
     if rule_parameters:
         check_defined(rule_parameters, 'rule_parameters')
-        print(f'Rule Params: {rule_parameters}')
+        logging.info(f'Rule Params: {rule_parameters}')
 
-    # We are only interested if it is a S3 bucket AND the bucket policy has changed
     if (configuration_item.get('resourceType') != 'AWS::S3::Bucket'):
         return 'NOT_APPLICABLE'
 
     else:
-        # Get bucket policy
         try:
             policy = json.loads(configuration_item.get('supplementaryConfiguration').get('BucketPolicy').get('policyText'))
-        except: # if no policy defined then it must be compliant
+        except:
             return 'COMPLIANT'
 
-        # Locate Accounts defined in bucket policy
         accounts = []
         for statement in policy.get('Statement'):
             for principal in statement.get('Principal'):
                 p = statement.get('Principal').get(principal)
-                # Handle multiple vs single principals in the policy
                 if isinstance(p, list):
                     for line in p:
                         accounts.append(line.split(':')[4])
@@ -148,32 +238,20 @@ def evaluate_change_notification_compliance(configuration_item, rule_parameters)
                 compliance.append(inOU(account))
             if USE_DB:
                 compliance.append(inDB(account))
-        print(compliance)
         return "NON_COMPLIANT" if 'NON_COMPLIANT' in compliance else "COMPLIANT"
 
 
 def lambda_handler(event, context):
+    """
+    Lambda function entry point.
 
-    global AWS_CONFIG_CLIENT
-    global AWS_DYNAMODB_CLIENT
-    global AWS_ORGANIZATION_CLIENT
-    global ACCOUNT_ID
-    global ORG_ID
-    global OU_ID
-    global USE_DB
-    global DATABASE_ARN
+    Args:
+        event (dict): The Lambda event.
+        context (object): The Lambda context.
 
-    AWS_CONFIG_CLIENT = boto3.client('config')
-    AWS_DYNAMODB_CLIENT = boto3.client('dynamodb')
-    AWS_ORGANIZATION_CLIENT = boto3.client('organization')
-
-    ACCOUNT_ID = boto3.client('sts').get_caller_identity().get('Account')
-
-    ORG_ID = False if str(os.environ.get('ORG_ID')).lower() == "false" else os.environ.get('ORG_ID')
-    OU_ID = False if str(os.environ.get('OU_ID')).lower() == "false" else os.environ.get('OU_ID')
-    USE_DB = False if str(os.environ.get('USE_DB')).lower() == "false" else True
-    DATABASE_ARN = False if str(os.environ.get('DATABASE_ARN')).lower() == "false" else os.environ.get('DATABASE_ARN')
-
+    Returns:
+        dict: The Lambda response.
+    """
     compliance_value = 'NOT_APPLICABLE'
     changedProperties = False
 
@@ -193,14 +271,14 @@ def lambda_handler(event, context):
     if is_applicable(configuration_item, event) and changedProperties:
         compliance_value = evaluate_change_notification_compliance(configuration_item, rule_parameters)
     else:
-        print('Not a policy change. Ignoring.')
+        logging.info('Not a policy change. Ignoring.')
         return
 
     configItem = invoking_event.get('configurationItem')
 
-    print(f'ComplianceResourceType: {configItem.get('resourceType')}')
-    print(f'ComplianceResourceId: {configItem.get('resourceId')}')
-    print(f'ComplianceType: {compliance_value}')
+    logging.info(f'ComplianceResourceType: {configItem.get('resourceType')}')
+    logging.info(f'ComplianceResourceId: {configItem.get('resourceId')}')
+    logging.info(f'ComplianceType: {compliance_value}')
 
     response = AWS_CONFIG_CLIENT.put_evaluations(
         Evaluations=[

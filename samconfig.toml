@@ -11,5 +11,5 @@ confirm_changeset = true
 resolve_s3 = true
 s3_prefix = "S3-Deploy"
 region = "eu-west-2"
-parameter_overrides = "OrganizationID=\"False\" ouID=\"False\" useDatabase=\"True\""
+parameter_overrides = "OrganizationID=\"False\" ouID=\"False\" useDatabase=\"False\""
 image_repositories = []
