@@ -19,10 +19,10 @@ This AWS Lambda function assesses compliance of AWS resources based on configura
    ```
 2. Deploy using AWS SAM:
 
-  ```bash
-  sam build
-  sam deploy --guided
-  ```
+   ```bash
+   sam build
+   sam deploy --guided
+   ```
   Follow the prompts to configure your deployment. This will package and deploy the Lambda function using AWS SAM, creating the necessary AWS resources.
 
 ## Configuration
@@ -67,7 +67,3 @@ Environment variables are defined in the CloudFormation template (template.yaml)
 ## Logging
 
 The Lambda function uses the logging package for local logging. Adjust the logging configuration in the code as needed.
-
-## License
-
-This project is licensed under the MIT License.
