@@ -1,5 +1,4 @@
 import json
-import logging
 import datetime
 import os
 import boto3
@@ -8,16 +7,13 @@ import botocore
 
 # Configuration
 AWS_CONFIG_CLIENT = boto3.client('config')
-AWS_DYNAMODB_CLIENT = boto3.client('dynamodb')
-AWS_ORGANIZATION_CLIENT = boto3.client('organization')
+AWS_DYNAMODB_RESOURCE = boto3.resource('dynamodb')
+AWS_ORGANIZATION_CLIENT = boto3.client('organizations')
 AWS_STS_CLIENT = boto3.client('sts')
 ORG_ID = False if str(os.environ.get('ORG_ID')).lower() == "false" else os.environ.get('ORG_ID')
 OU_ID = False if str(os.environ.get('OU_ID')).lower() == "false" else os.environ.get('OU_ID')
 USE_DB = False if str(os.environ.get('USE_DB')).lower() == "false" else True
 DATABASE_ARN = False if str(os.environ.get('DATABASE_ARN')).lower() == "false" else os.environ.get('DATABASE_ARN')
-
-# Set up logging
-logging.basicConfig(level=logging.INFO)
 
 
 def get_aws_account_id():
@@ -126,7 +122,7 @@ def is_applicable(configurationItem, event):
     status = configurationItem.get('configurationItemStatus')
     eventLeftScope = event.get('eventLeftScope')
     if status == 'ResourceDeleted':
-        logging.info("Resource Deleted, setting Compliance Status to NOT_APPLICABLE.")
+        print("Resource Deleted, setting Compliance Status to NOT_APPLICABLE.")
     return (status == 'OK' or status == 'ResourceDiscovered') and not eventLeftScope
 
 
@@ -186,7 +182,21 @@ def inOU(account):
 
 
 def inDB(account):
-    if account == DATABASE_ARN:
+    """
+    Checks if the provided AWS account is present in the DynamoDB table associated with the specified DATABASE_ARN.
+
+    Args:
+        account (str): AWS account ID to check for compliance.
+
+    Returns:
+        str: 'COMPLIANT' if the account is found in the DynamoDB table, 'NON_COMPLIANT' otherwise.
+    """
+    dbName = (str(DATABASE_ARN).split('/'))[-1]
+    table = AWS_DYNAMODB_RESOURCE.Table(dbName)
+    response = table.scan()
+    items = response.get('Items')
+    listOfIds = [id.get("AllowedAccountID") for id in items]
+    if account in listOfIds:
         return 'COMPLIANT'
     else:
         return 'NON_COMPLIANT'
@@ -208,7 +218,7 @@ def evaluate_change_notification_compliance(configuration_item, rule_parameters)
 
     if rule_parameters:
         check_defined(rule_parameters, 'rule_parameters')
-        logging.info(f'Rule Params: {rule_parameters}')
+        print(f'Rule Params: {rule_parameters}')
 
     if (configuration_item.get('resourceType') != 'AWS::S3::Bucket'):
         return 'NOT_APPLICABLE'
@@ -271,14 +281,14 @@ def lambda_handler(event, context):
     if is_applicable(configuration_item, event) and changedProperties:
         compliance_value = evaluate_change_notification_compliance(configuration_item, rule_parameters)
     else:
-        logging.info('Not a policy change. Ignoring.')
+        print('Not a policy change. Ignoring.')
         return
 
     configItem = invoking_event.get('configurationItem')
 
-    logging.info(f'ComplianceResourceType: {configItem.get('resourceType')}')
-    logging.info(f'ComplianceResourceId: {configItem.get('resourceId')}')
-    logging.info(f'ComplianceType: {compliance_value}')
+    print(f'ComplianceResourceType: {configItem.get('resourceType')}')
+    print(f'ComplianceResourceId: {configItem.get('resourceId')}')
+    print(f'ComplianceType: {compliance_value}')
 
     response = AWS_CONFIG_CLIENT.put_evaluations(
         Evaluations=[

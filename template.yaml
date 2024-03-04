@@ -60,7 +60,7 @@ Resources:
         - AWSConfigRulesExecutionRole
         - !If [
             CreateDynamoDB,
-            "arn:aws:iam::aws:policy/AWSLambdaInvocation-DynamoDB",
+            "arn:aws:iam::aws:policy/AmazonDynamoDBReadOnlyAccess",
             !Ref "AWS::NoValue"
           ]
   ConfigS3BucketPolicy:
@@ -89,10 +89,10 @@ Resources:
     Type: AWS::DynamoDB::Table
     Condition: CreateDynamoDB
     Properties:
-      TableName: "S3PolicyAllowedAccIDs"
+      TableName: "S3PolicyAllowedAccIDS"
       AttributeDefinitions:
         - AttributeName: "AllowedAccountID"
-          AttributeType: "N"
+          AttributeType: "S"
         - AttributeName: "Reason"
           AttributeType: "S"
       KeySchema:
